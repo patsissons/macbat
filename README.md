@@ -26,6 +26,7 @@ BINDIR=/usr/local/bin scripts/install.sh  # or pick another directory
 ```
 
 `scripts/build.sh` builds without installing (release by default, `--debug` for a debug build).
+`scripts/run.sh [args]` runs the current source without installing (e.g. `scripts/run.sh pipe -s 1`).
 `cargo install --path .` also works.
 
 ## Usage

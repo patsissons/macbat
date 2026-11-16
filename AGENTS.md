@@ -11,6 +11,7 @@ cargo build                       # debug build
 cargo build --release             # LTO + stripped, ~1.2 MB
 scripts/build.sh [--debug]        # same, release by default; prints the binary path and size
 scripts/install.sh                # release build, installed to $BINDIR (default ~/.local/bin)
+scripts/run.sh [args]             # cargo run (debug), args go to macbat
 ./target/debug/macbat pipe -s 3   # 3 JSON samples — quickest end-to-end check of the data layer
 ./target/debug/macbat debug       # raw SMC keys, registry entry, and one combined sample
 ./target/debug/macbat debug P     # every SMC key starting with "P" (use to discover sensors)
@@ -44,7 +45,7 @@ after testing.
 | `src/app.rs` | ratatui UI: panels, sparkline/gauge views, history chart, key handling |
 | `src/config.rs` | Persisted UI prefs (color, view, history window) |
 | `src/main.rs` | clap CLI: default TUI, `pipe`, `debug` |
-| `scripts/` | `build.sh` and `install.sh` wrappers around cargo |
+| `scripts/` | `build.sh`, `install.sh` and `run.sh` wrappers around cargo |
 
 The TUI samples on a background thread and sends `Sample`s over an mpsc channel; the UI thread
 keeps up to 1 h of history in a `VecDeque`.
