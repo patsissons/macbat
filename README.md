@@ -4,19 +4,7 @@ Sudoless power monitor for Apple Silicon laptops, in the style of [macmon](https
 Shows what the power adapter is delivering, what the system is drawing, and whether the battery is
 charging or covering a shortfall — live, and over time.
 
-```
-╭ 8 W adapter · 5.0 V × 1.50 A ──────────────────────────── Mac14,2 · macbat v0.1.0 ╮
-│╭ Power In ──────────────── 7.15 W ╮╭ System ───────────────────────────── 3.77 W ╮│
-││                     ▂▂▂▂▂▂▂▂▂▂▂▂ ││                       █▃█▂▃▄▁▂▂▂▃▄          ││
-│╰ 4.99 V × 1.43 A ── 89% of 8 W ───╯╰ avg 3.81 W · max 5.72 W ──────────────────╯│
-│╭ Battery ────── +3.41 W charging ╮╭ Charge ────────────────────────────── 90% ╮│
-││                    ▆ ▆▆▄█▆▆▆▅▃▄ ││██████████████████████90% ████████▎        ││
-│╰ 12.66 V × +0.27 A ─ full in 1:49 ╯╰ 3489 / 3881 mAh ── 88% of design · 181 cycles ╯│
-│╭ Power History ────────────────────── avg in 7.15 W · sys 3.81 W · bat +3.37 W ╮│
-││ braille line chart of in / sys / bat (bat goes below 0 W when draining) ││
-│╰ since: in 0.02 Wh · sys 0.01 Wh · bat +0.01 Wh ───────────────────────────────╯│
-╰──────────────────────────── q quit · c color · v view: sparkline · +/- history: 1m ╯
-```
+![macbat running on an M2 MacBook Air while charging](assets/screenshot.svg)
 
 ## Install
 
