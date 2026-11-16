@@ -157,17 +157,25 @@ impl App {
         };
         let header = if s.source == "smc" { header } else { format!("{header} · registry only (slow updates)") };
         let hint = format!(
-            " q quit · c color · v view: {} · +/- history: {} ",
+            "q quit · c color · v view: {} · +/- history: {}",
             self.cfg.view.label(),
             fmt_secs(self.window_secs())
         );
-        let outer = Block::bordered()
+        let width = f.area().width;
+        let model = format!("{} · macbat v{}", self.model, env!("CARGO_PKG_VERSION"));
+        let (header, model) = fit(width, &header, &model);
+        let (_, hint) = fit(width, "", &hint);
+        let mut outer = Block::bordered()
             .border_type(BorderType::Rounded)
             .border_style(Style::new().fg(accent))
             .title_style(Style::new().fg(Color::Reset))
-            .title_top(Line::from(format!(" {header} ")).bold())
-            .title_top(Line::from(format!(" {} · macbat v{} ", self.model, env!("CARGO_PKG_VERSION"))).right_aligned())
-            .title_bottom(Line::from(hint).right_aligned());
+            .title_top(Line::from(format!(" {header} ")).bold());
+        if !model.is_empty() {
+            outer = outer.title_top(Line::from(format!(" {model} ")).right_aligned());
+        }
+        if !hint.is_empty() {
+            outer = outer.title_bottom(Line::from(format!(" {hint} ")).right_aligned());
+        }
         let area = outer.inner(f.area());
         f.render_widget(outer, f.area());
 
@@ -200,7 +208,7 @@ impl App {
         } else {
             ("—".into(), "on battery".into(), String::new())
         };
-        let block = panel(accent, "Power In", value, foot_l, foot_r);
+        let block = panel(accent, area.width, "Power In", value, foot_l, foot_r);
         let inner = block.inner(area);
         f.render_widget(block, area);
 
@@ -223,14 +231,9 @@ impl App {
         let (avg, max) = avg_max(self.in_window().map(|s| s.system_watts));
         let short = s.external_connected && s.battery.watts < -0.1;
         let foot_r = if short { format!("adapter short by {}", fmt_w(-s.battery.watts)) } else { String::new() };
-        let mut block = panel(
-            accent,
-            "System",
-            fmt_w(s.system_watts),
-            format!("avg {} · max {}", fmt_w(avg), fmt_w(max)),
-            String::new(),
-        );
-        if short {
+        let (foot_l, foot_r) = fit(area.width, &format!("avg {} · max {}", fmt_w(avg), fmt_w(max)), &foot_r);
+        let mut block = panel(accent, area.width, "System", fmt_w(s.system_watts), foot_l, String::new());
+        if !foot_r.is_empty() {
             block = block.title_bottom(Line::from(format!(" {foot_r} ")).right_aligned().fg(Color::Red).bold());
         }
         let inner = block.inner(area);
@@ -262,7 +265,7 @@ impl App {
             ("discharging", Some(m)) => format!("empty in {}", fmt_minutes(m)),
             _ => String::new(),
         };
-        let block = panel(accent, "Battery", value, format!("{:.2} V × {:+.2} A", b.volts, b.amps), foot_r);
+        let block = panel(accent, area.width, "Battery", value, format!("{:.2} V × {:+.2} A", b.volts, b.amps), foot_r);
         let inner = block.inner(area);
         f.render_widget(block, area);
 
@@ -300,7 +303,7 @@ impl App {
         if let Some(t) = b.temp_c {
             details.push(format!("{t:.1} °C"));
         }
-        let block = panel(accent, "Charge", format!("{:.0}%", b.percent), foot_l, details.join(" · "));
+        let block = panel(accent, area.width, "Charge", format!("{:.0}%", b.percent), foot_l, details.join(" · "));
         let inner = block.inner(area);
         f.render_widget(block, area);
         f.render_widget(gauge(accent, b.percent / 100.0, format!("{:.0}%", b.percent)), inner);
@@ -341,6 +344,7 @@ impl App {
         let (avg_batt, _) = avg_max(self.in_window().map(|s| s.battery.watts));
         let block = panel(
             accent,
+            area.width,
             "Power History",
             format!("avg in {} · sys {} · bat {}", fmt_w(avg_in), fmt_w(avg_sys), fmt_signed_w(avg_batt)),
             format!(
@@ -371,13 +375,40 @@ impl App {
     }
 }
 
-fn panel<'a>(color: Color, title: &str, value: String, foot_l: String, foot_r: String) -> Block<'a> {
+/// Fits a left and a right title into one border of a block `width` cells wide.
+///
+/// ratatui draws overlapping titles on top of each other, so when both don't fit, the right
+/// title loses its " · "-separated parts from the end, then the left title is truncated with "…".
+fn fit(width: u16, left: &str, right: &str) -> (String, String) {
+    let avail = (width as usize).saturating_sub(2); // corners
+    let cells = |s: &str| if s.is_empty() { 0 } else { s.chars().count() + 2 }; // " s "
+
+    let mut parts: Vec<&str> = if right.is_empty() { vec![] } else { right.split(" · ").collect() };
+    let mut right = parts.join(" · ");
+    while !parts.is_empty() && cells(left) + cells(&right) > avail {
+        parts.pop();
+        right = parts.join(" · ");
+    }
+    let left = if cells(left) > avail {
+        let keep = avail.saturating_sub(3);
+        if keep == 0 { String::new() } else { left.chars().take(keep).chain(['…']).collect() }
+    } else {
+        left.to_string()
+    };
+    (left, right)
+}
+
+fn panel<'a>(color: Color, width: u16, title: &str, value: String, foot_l: String, foot_r: String) -> Block<'a> {
+    let (title, value) = fit(width, title, &value);
+    let (foot_l, foot_r) = fit(width, &foot_l, &foot_r);
     let mut block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(Style::new().fg(color))
         .title_style(Style::new().fg(Color::Reset))
-        .title_top(Line::from(format!(" {title} ")))
-        .title_top(Line::from(format!(" {value} ")).right_aligned().add_modifier(Modifier::BOLD));
+        .title_top(Line::from(format!(" {title} ")));
+    if !value.is_empty() {
+        block = block.title_top(Line::from(format!(" {value} ")).right_aligned().add_modifier(Modifier::BOLD));
+    }
     if !foot_l.is_empty() {
         block = block.title_bottom(Line::from(format!(" {foot_l} ")).dark_gray());
     }
