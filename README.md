@@ -21,8 +21,12 @@ charging or covering a shortfall — live, and over time.
 ## Install
 
 ```sh
-cargo install --path .
+scripts/install.sh                        # release build → ~/.local/bin/macbat
+BINDIR=/usr/local/bin scripts/install.sh  # or pick another directory
 ```
+
+`scripts/build.sh` builds without installing (release by default, `--debug` for a debug build).
+`cargo install --path .` also works.
 
 ## Usage
 
