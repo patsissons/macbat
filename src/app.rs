@@ -157,7 +157,7 @@ impl App {
         };
         let header = if s.source == "smc" { header } else { format!("{header} · registry only (slow updates)") };
         let hint = format!(
-            " 'q' quit · 'c' color · 'v' view: {} · '+/-' history: {} ",
+            " q quit · c color · v view: {} · +/- history: {} ",
             self.cfg.view.label(),
             fmt_secs(self.window_secs())
         );
@@ -332,8 +332,8 @@ impl App {
         }
         datasets.extend([
             line("in", accent, &input),
-            line("system", c_sys, &system),
-            line("battery", c_batt, &battery),
+            line("sys", c_sys, &system),
+            line("bat", c_batt, &battery),
         ]);
 
         let (avg_in, _) = avg_max(self.in_window().map(|s| s.input.watts));
@@ -342,9 +342,9 @@ impl App {
         let block = panel(
             accent,
             "Power History",
-            format!("avg in {} · system {} · battery {}", fmt_w(avg_in), fmt_w(avg_sys), fmt_signed_w(avg_batt)),
+            format!("avg in {} · sys {} · bat {}", fmt_w(avg_in), fmt_w(avg_sys), fmt_signed_w(avg_batt)),
             format!(
-                "since start: in {:.2} Wh · system {:.2} Wh · battery {:+.2} Wh",
+                "since: in {:.2} Wh · sys {:.2} Wh · bat {:+.2} Wh",
                 self.energy_in_wh, self.energy_sys_wh, self.energy_batt_wh
             ),
             String::new(),

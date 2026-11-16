@@ -12,10 +12,10 @@ charging or covering a shortfall — live, and over time.
 │╭ Battery ────── +3.41 W charging ╮╭ Charge ────────────────────────────── 90% ╮│
 ││                    ▆ ▆▆▄█▆▆▆▅▃▄ ││██████████████████████90% ████████▎        ││
 │╰ 12.66 V × +0.27 A ─ full in 1:49 ╯╰ 3489 / 3881 mAh ── 88% of design · 181 cycles ╯│
-│╭ Power History ─────────────── avg in 7.15 W · system 3.81 W · battery +3.37 W ╮│
-││ braille line chart of in / system / battery (battery goes below 0 W when draining) ││
-│╰ since start: in 0.02 Wh · system 0.01 Wh · battery +0.01 Wh ──────────────────╯│
-╰──────────────────── 'q' quit · 'c' color · 'v' view: sparkline · '+/-' history: 1m ╯
+│╭ Power History ────────────────────── avg in 7.15 W · sys 3.81 W · bat +3.37 W ╮│
+││ braille line chart of in / sys / bat (bat goes below 0 W when draining) ││
+│╰ since: in 0.02 Wh · sys 0.01 Wh · bat +0.01 Wh ───────────────────────────────╯│
+╰──────────────────────────── q quit · c color · v view: sparkline · +/- history: 1m ╯
 ```
 
 ## Install
