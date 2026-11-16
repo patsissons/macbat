@@ -2,7 +2,7 @@
 //! sparklines (or gauges) per metric, and a combined history chart.
 
 use crate::config::{Config, View};
-use crate::sampler::{Sample, Sampler};
+use crate::sampler::{Adapter, Sample, Sampler};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::{
     Frame,
@@ -143,9 +143,12 @@ impl App {
 
         let header = match &s.adapter {
             Some(a) if s.external_connected => {
-                let mut h = format!("{} W adapter · {:.1} V × {:.2} A", fmt_num(a.rated_watts), a.volts, a.amps);
+                let mut h = format!("{} W negotiated · {:.1} V × {:.2} A", fmt_num(a.rated_watts), a.volts, a.amps);
                 if let Some(name) = &a.name {
                     h.push_str(&format!(" ({name})"));
+                }
+                if let Some(note) = cable_limit(a) {
+                    h.push_str(&format!(" · {note}"));
                 }
                 if a.wireless {
                     h.push_str(" · wireless");
@@ -443,6 +446,17 @@ fn line<'a>(name: &'a str, color: Color, data: &'a [(f64, f64)]) -> Dataset<'a> 
         .graph_type(GraphType::Line)
         .style(Style::new().fg(color))
         .data(data)
+}
+
+/// Explains a negotiation below the charger's label when the cable is the likely cause.
+///
+/// A USB-C charger may only offer more than 3 A when the cable is rated for 5 A, so a charger
+/// whose name claims more than 60 W but whose best offer is 20 V × 3 A is held back by its cable.
+fn cable_limit(a: &Adapter) -> Option<String> {
+    let label = a.name.as_deref()?.split_whitespace().find_map(|t| t.strip_suffix('W')?.parse::<f64>().ok())?;
+    let best = a.offers.iter().max_by(|x, y| (x.volts * x.amps).total_cmp(&(y.volts * y.amps)))?;
+    let capped = best.volts >= 20.0 && (best.amps - 3.0).abs() < 0.05 && label > best.volts * best.amps * 1.05;
+    capped.then(|| format!("3 A cable limit ({} W charger)", fmt_num(label)))
 }
 
 fn avg_max(values: impl Iterator<Item = f64>) -> (f64, f64) {

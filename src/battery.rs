@@ -41,6 +41,17 @@ pub struct AdapterDetails {
     pub is_wireless: bool,
     pub name: Option<String>,
     pub description: Option<String>,
+    /// The USB-PD voltage/current levels the charger offered (its source capabilities).
+    pub usb_hvc_menu: Vec<HvcOffer>,
+}
+
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct HvcOffer {
+    /// mV
+    pub max_voltage: i64,
+    /// mA
+    pub max_current: i64,
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]

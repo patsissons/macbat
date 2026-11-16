@@ -45,13 +45,25 @@ pub struct Battery {
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Adapter {
+    /// Power negotiated with the charger, W. Limited by what the charger offers (which the
+    /// cable can cap at 3 A) and by what the Mac accepts, so it can be below the label rating.
     pub rated_watts: f64,
+    /// Negotiated voltage, V.
     pub volts: f64,
+    /// Negotiated current, A.
     pub amps: f64,
     pub name: Option<String>,
     pub wireless: bool,
     /// Conversion loss reported by the battery driver, W (refreshes slowly).
     pub loss_watts: Option<f64>,
+    /// Voltage/current levels the charger offered, lowest voltage first.
+    pub offers: Vec<Offer>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct Offer {
+    pub volts: f64,
+    pub amps: f64,
 }
 
 struct SmcReading {
@@ -155,9 +167,15 @@ impl Sampler {
             rated_watts: a.watts as f64,
             volts: a.adapter_voltage as f64 / 1000.0,
             amps: a.current as f64 / 1000.0,
-            name: a.name.or(a.description).filter(|s| !s.is_empty()),
+            // The registry pads some names, e.g. "70W USB-C Power Adapter ".
+            name: [a.name, a.description].into_iter().flatten().map(|s| s.trim().to_string()).find(|s| !s.is_empty()),
             wireless: a.is_wireless,
             loss_watts: (tel.adapter_efficiency_loss > 0).then(|| tel.adapter_efficiency_loss as f64 / 1000.0),
+            offers: a
+                .usb_hvc_menu
+                .iter()
+                .map(|o| Offer { volts: o.max_voltage as f64 / 1000.0, amps: o.max_current as f64 / 1000.0 })
+                .collect(),
         });
 
         Sample {
