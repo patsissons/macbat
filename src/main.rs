@@ -1,4 +1,6 @@
+mod app;
 mod battery;
+mod config;
 mod iokit;
 mod sampler;
 mod smc;
@@ -44,7 +46,7 @@ fn main() {
     let cli = Cli::parse();
     let interval = Duration::from_millis(cli.interval.max(100));
     let result = match cli.command {
-        None => pipe(interval, 0),
+        None => app::run(interval),
         Some(Command::Pipe { samples }) => pipe(interval, samples),
         Some(Command::Debug { prefix }) => debug(prefix),
     };
