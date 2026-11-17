@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Regenerate assets/screenshot.svg from a live run of the TUI.
+# Regenerate assets/screenshot.svg from a live run of the TUI, plus the copy embedded in
+# site/index.html and the site/og.png social preview built from it.
 # Renders macbat headless in tmux, waits for the history to fill, then converts the
 # colored capture to an SVG terminal window with scripts/ansi2svg.py.
 #   scripts/screenshot.sh            # wait 65 s (fills the 1m history window)
@@ -30,3 +31,6 @@ tmux capture-pane -e -p -t "$session" > "$tmp/capture.ansi"
 mkdir -p "$(dirname "$out")"
 python3 scripts/ansi2svg.py "$tmp/capture.ansi" "$cols" "$rows" --title macbat > "$out"
 echo "wrote $out"
+
+scripts/sync-site-screenshot.sh
+scripts/og-image.sh
