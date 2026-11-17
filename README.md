@@ -57,3 +57,7 @@ as "3 A cable limit". Dual-port chargers often offer less than their label per p
 
 "% of design" is `NominalChargeCapacity / DesignCapacity`. macOS's "Maximum Capacity" in System
 Settings uses its own (unpublished) formula and may differ by a few percent.
+
+## License
+
+[MIT](LICENSE)
