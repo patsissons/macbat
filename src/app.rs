@@ -1,7 +1,7 @@
 //! Terminal UI, modelled on macmon: rounded panels with live values in the titles,
 //! sparklines (or gauges) per metric, and a combined history chart.
 
-use crate::config::{Config, View};
+use crate::config::{Config, Scale, View};
 use crate::sampler::{Adapter, Sample, Sampler};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::{
@@ -25,6 +25,8 @@ const COLORS: [Color; 7] =
 /// Secondary series colors for the history chart, in preference order.
 const SERIES: [Color; 5] = [Color::Yellow, Color::Magenta, Color::Cyan, Color::Blue, Color::Red];
 const WINDOWS: [u64; 4] = [60, 300, 900, 3600];
+/// Smallest sparkline ceiling, W, so near-zero noise isn't magnified into full-height bars.
+const MIN_CEILING: f64 = 1.0;
 
 pub fn run(interval: Duration) -> Result<(), String> {
     let mut sampler = Sampler::new()?;
@@ -96,6 +98,7 @@ impl App {
                 KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => return Ok(()),
                 KeyCode::Char('c') => self.cfg.color = (self.cfg.color + 1) % COLORS.len(),
                 KeyCode::Char('v') => self.cfg.view = self.cfg.view.toggle(),
+                KeyCode::Char('r') => self.cfg.scale = self.cfg.scale.next(),
                 KeyCode::Char('+') | KeyCode::Char('=') => {
                     self.cfg.window = (self.cfg.window + 1).min(WINDOWS.len() - 1)
                 }
@@ -160,8 +163,9 @@ impl App {
         };
         let header = if s.source == "smc" { header } else { format!("{header} · registry only (slow updates)") };
         let hint = format!(
-            "q quit · c color · v view: {} · +/- history: {}",
+            "q quit · c color · v view: {} · r scale: {} · +/- history: {}",
             self.cfg.view.label(),
+            self.cfg.scale.label(),
             fmt_secs(self.window_secs())
         );
         let width = f.area().width;
@@ -199,9 +203,68 @@ impl App {
         self.history.iter().rev().take(width as usize)
     }
 
+    /// Sparkline ceiling in W for a panel `width` columns wide.
+    ///
+    /// - default: the larger of `default_ref` (if any) and the visible peak.
+    /// - auto: the visible peak (the watermark row above the bars is the headroom).
+    /// - full: the charger's negotiated power (`rated`), or the session peak when that is higher
+    ///   or there's no charger, so bars are never clipped.
+    fn ceiling(
+        &self,
+        width: u16,
+        rated: Option<f64>,
+        default_ref: Option<f64>,
+        value: impl Fn(&Sample) -> f64,
+    ) -> f64 {
+        let ceiling = match self.cfg.scale {
+            Scale::Default => self.recent(width).map(&value).fold(default_ref.unwrap_or(0.0), f64::max),
+            Scale::Auto => self.recent(width).map(&value).fold(0.0, f64::max),
+            Scale::Full => self.history.iter().map(&value).fold(rated.unwrap_or(0.0), f64::max),
+        };
+        ceiling.max(MIN_CEILING)
+    }
+
+    /// Renders the visible samples as a sparkline scaled to `ceiling` W, each bar colored by
+    /// `bar_color`.
+    ///
+    /// In autoscale mode the top row is reserved for a watermark: `label` followed by a line drawn
+    /// along the bottom of the row, so a bar at the ceiling meets it without a gap. The line is
+    /// skipped when there are no bars to scale.
+    fn render_spark(
+        &self,
+        f: &mut Frame,
+        area: Rect,
+        ceiling: f64,
+        label: &str,
+        value: impl Fn(&Sample) -> f64,
+        bar_color: impl Fn(&Sample) -> Color,
+    ) {
+        let watermark = self.cfg.scale == Scale::Auto && area.height >= 3;
+        let bars_area = if watermark { Rect { y: area.y + 1, height: area.height - 1, ..area } } else { area };
+        let bars: Vec<_> = self
+            .recent(bars_area.width)
+            .map(|s| SparklineBar::from(cw(value(s))).style(Style::new().fg(bar_color(s))))
+            .collect();
+        f.render_widget(spark(bars, ceiling), bars_area);
+
+        if !watermark || !self.recent(area.width).any(|s| cw(value(s)) > 0) {
+            return;
+        }
+        let style = Style::new().fg(Color::DarkGray);
+        let buf = f.buffer_mut();
+        let mut label = format!("{label} ").chars().collect::<Vec<_>>().into_iter();
+        for x in area.left()..area.right() {
+            let cell = &mut buf[(x, area.top())];
+            match label.next() {
+                Some(ch) => cell.set_char(ch).set_style(style),
+                None => cell.set_symbol("▁").set_style(style),
+            };
+        }
+    }
+
     fn render_input(&self, f: &mut Frame, area: Rect, s: &Sample) {
         let accent = self.accent();
-        let rated = s.adapter.as_ref().map(|a| a.rated_watts).filter(|w| *w > 0.0);
+        let rated = rated(s);
         let (value, foot_l, foot_r) = if s.external_connected {
             (
                 fmt_w(s.input.watts),
@@ -217,9 +280,8 @@ impl App {
 
         match self.cfg.view {
             View::Sparkline => {
-                let peak = self.recent(inner.width).map(|s| s.input.watts).fold(rated.unwrap_or(1.0), f64::max);
-                let data = self.recent(inner.width).map(|s| SparklineBar::from(cw(s.input.watts)));
-                f.render_widget(spark(accent, data, peak), inner);
+                let ceiling = self.ceiling(inner.width, rated, rated, |s| s.input.watts);
+                self.render_spark(f, inner, ceiling, &fmt_w(ceiling), |s| s.input.watts, |_| accent);
             }
             View::Gauge => {
                 let full = rated.unwrap_or(s.input.watts.max(1.0));
@@ -231,22 +293,38 @@ impl App {
 
     fn render_system(&self, f: &mut Frame, area: Rect, s: &Sample) {
         let accent = self.accent();
+        let rated = rated(s);
         let (avg, max) = avg_max(self.in_window().map(|s| s.system_watts));
+
+        // What the graph is scaled against: the sparkline ceiling, or the gauge's peak.
+        let ceiling = self.ceiling(area.width.saturating_sub(2), rated, None, |s| s.system_watts);
+        let reference = match self.cfg.view {
+            // Only full scale can land on the charger's rating; the other modes scale to a peak.
+            View::Sparkline if self.cfg.scale == Scale::Full && rated.is_some_and(|r| r >= ceiling) => {
+                format!("{} W rating", fmt_num(ceiling))
+            }
+            View::Sparkline => format!("{} peak", fmt_w(ceiling)),
+            View::Gauge => format!("{} peak", fmt_w(max)),
+        };
+        let full = if self.cfg.view == View::Sparkline { ceiling } else { max.max(0.01) };
+        let share = format!("{:.0}% of {reference}", s.system_watts / full * 100.0);
+
+        // The shortfall warning takes the right footer when the battery is covering for the charger.
         let short = s.external_connected && s.battery.watts < -0.1;
-        let foot_r = if short { format!("adapter short by {}", fmt_w(-s.battery.watts)) } else { String::new() };
-        let (foot_l, foot_r) = fit(area.width, &format!("avg {} · max {}", fmt_w(avg), fmt_w(max)), &foot_r);
-        let mut block = panel(accent, area.width, "System", fmt_w(s.system_watts), foot_l, String::new());
-        if !foot_r.is_empty() {
-            block = block.title_bottom(Line::from(format!(" {foot_r} ")).right_aligned().fg(Color::Red).bold());
-        }
+        let foot_l = format!("avg {} · max {}", fmt_w(avg), fmt_w(max));
+        let block = if short {
+            let (foot_l, warning) = fit(area.width, &foot_l, &format!("adapter short by {}", fmt_w(-s.battery.watts)));
+            let block = panel(accent, area.width, "System", fmt_w(s.system_watts), foot_l, String::new());
+            block.title_bottom(Line::from(format!(" {warning} ")).right_aligned().fg(Color::Red).bold())
+        } else {
+            panel(accent, area.width, "System", fmt_w(s.system_watts), foot_l, share)
+        };
         let inner = block.inner(area);
         f.render_widget(block, area);
 
         match self.cfg.view {
             View::Sparkline => {
-                let peak = self.recent(inner.width).map(|s| s.system_watts).fold(1.0, f64::max);
-                let data = self.recent(inner.width).map(|s| SparklineBar::from(cw(s.system_watts)));
-                f.render_widget(spark(accent, data, peak), inner);
+                self.render_spark(f, inner, ceiling, &fmt_w(ceiling), |s| s.system_watts, |_| accent);
             }
             View::Gauge => {
                 let label = format!("{} of {} peak", fmt_w(s.system_watts), fmt_w(max));
@@ -275,11 +353,18 @@ impl App {
         let color = |w: f64| if w < 0.0 { drain } else { accent };
         match self.cfg.view {
             View::Sparkline => {
-                let peak = self.recent(inner.width).map(|s| s.battery.watts.abs()).fold(1.0, f64::max);
-                let data = self.recent(inner.width).map(|s| {
-                    SparklineBar::from(cw(s.battery.watts.abs())).style(Style::new().fg(color(s.battery.watts)))
+                let ceiling = self.ceiling(inner.width, rated(s), None, |s| s.battery.watts.abs());
+                // Bars show magnitude, so sign the label by what's on screen.
+                let (charging, draining) = self.recent(inner.width).fold((false, false), |(c, d), s| {
+                    (c || cw(s.battery.watts) > 0, d || cw(-s.battery.watts) > 0)
                 });
-                f.render_widget(spark(accent, data, peak), inner);
+                let sign = match (charging, draining) {
+                    (true, false) => "+",
+                    (false, true) => "−",
+                    _ => "±",
+                };
+                let label = format!("{sign}{}", fmt_w(ceiling));
+                self.render_spark(f, inner, ceiling, &label, |s| s.battery.watts.abs(), |s| color(s.battery.watts));
             }
             View::Gauge => {
                 let peak = self.in_window().map(|s| s.battery.watts.abs()).fold(0.01, f64::max);
@@ -422,12 +507,13 @@ fn panel<'a>(color: Color, width: u16, title: &str, value: String, foot_l: Strin
 }
 
 /// Newest-first data rendered right-to-left, so the latest sample sits at the right edge.
-fn spark<'a>(color: Color, data: impl Iterator<Item = SparklineBar>, peak: f64) -> Sparkline<'a> {
-    Sparkline::default()
-        .data(data.collect::<Vec<_>>())
-        .max(cw(peak).max(1))
-        .direction(RenderDirection::RightToLeft)
-        .style(Style::new().fg(color))
+/// The charger's negotiated power, W, when one is connected and reports it.
+fn rated(s: &Sample) -> Option<f64> {
+    s.adapter.as_ref().map(|a| a.rated_watts).filter(|w| *w > 0.0)
+}
+
+fn spark<'a>(bars: Vec<SparklineBar>, ceiling: f64) -> Sparkline<'a> {
+    Sparkline::default().data(bars).max(cw(ceiling).max(1)).direction(RenderDirection::RightToLeft)
 }
 
 fn gauge<'a>(color: Color, ratio: f64, label: String) -> Gauge<'a> {

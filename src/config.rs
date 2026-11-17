@@ -1,4 +1,4 @@
-//! Persists UI preferences (color, view, history window) to ~/.config/macbat.json.
+//! Persists UI preferences (color, view, sparkline scale, history window) to ~/.config/macbat.json.
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -27,11 +27,44 @@ impl View {
     }
 }
 
+/// How the sparklines pick their ceiling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Scale {
+    /// Power In against the charger's negotiated power; System and Battery against their
+    /// visible peak.
+    #[default]
+    Default,
+    /// Peak of the visible bars, marked with a watermark line above them.
+    Auto,
+    /// The charger's negotiated power (or the session peak on battery).
+    Full,
+}
+
+impl Scale {
+    pub fn next(self) -> Self {
+        match self {
+            Scale::Default => Scale::Auto,
+            Scale::Auto => Scale::Full,
+            Scale::Full => Scale::Default,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Scale::Default => "default",
+            Scale::Auto => "auto",
+            Scale::Full => "full",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub color: usize,
     pub view: View,
+    pub scale: Scale,
     pub window: usize,
 }
 

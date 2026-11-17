@@ -44,7 +44,13 @@ macbat debug           # raw SMC keys + battery registry entry
 macbat debug P         # every SMC key starting with "P"
 ```
 
-Keys: `q` quit · `c` cycle color · `v` sparkline/gauge view · `+`/`-` history window (1m, 5m, 15m, 1h).
+Keys: `q` quit · `c` cycle color · `v` sparkline/gauge view · `r` sparkline scale · `+`/`-` history window (1m, 5m, 15m, 1h).
+
+`r` cycles the sparkline scale:
+
+- **default**: Power In against the charger's negotiated power, System and Battery against their visible peak.
+- **auto**: every panel against its visible peak, marked by a line above the bars labelled with that peak (signed for Battery: + charging, − discharging).
+- **full**: every panel from 0 to the charger's negotiated power (the session peak if that's higher, or on battery).
 Preferences persist in `~/.config/macbat.json`.
 
 ## Where the numbers come from

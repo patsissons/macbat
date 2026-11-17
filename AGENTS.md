@@ -28,11 +28,11 @@ The TUI needs a real tty. Render it headless in tmux and capture the screen:
 ```sh
 tmux new-session -d -s macbat -x 120 -y 36 ./target/debug/macbat
 sleep 5; tmux capture-pane -p -t macbat      # text snapshot of the UI
-tmux send-keys -t macbat v                    # drive keys: q c v + -
+tmux send-keys -t macbat v                    # drive keys: q c v r + -
 tmux kill-session -t macbat
 ```
 
-Pressing `c`/`v`/`+`/`-` writes `~/.config/macbat.json` (the user's real preferences). Restore it
+Pressing `c`/`v`/`r`/`+`/`-` writes `~/.config/macbat.json` (the user's real preferences). Restore it
 after testing.
 
 ## Layout
