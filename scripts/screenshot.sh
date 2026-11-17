@@ -20,7 +20,7 @@ tmp="$(mktemp -d)"
 trap 'tmux kill-session -t "$session" 2>/dev/null || true; rm -rf "$tmp"' EXIT
 
 mkdir -p "$tmp/.config"
-echo '{"color":0,"view":"sparkline","window":0}' > "$tmp/.config/macbat.json"
+echo '{"color":0,"view":"sparkline","scale":"auto","window":0}' > "$tmp/.config/macbat.json"
 
 scripts/build.sh
 tmux new-session -d -s "$session" -x "$cols" -y "$rows" "HOME='$tmp' ./target/release/macbat"
