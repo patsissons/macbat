@@ -8,6 +8,22 @@ charging or covering a shortfall — live, and over time.
 
 ## Install
 
+With [Homebrew](https://brew.sh):
+
+```sh
+brew install patsissons/tap/macbat
+```
+
+### From source
+
+Needs a Rust toolchain ([rustup.rs](https://rustup.rs)).
+
+```sh
+cargo install --git https://github.com/patsissons/macbat
+```
+
+Or from a clone:
+
 ```sh
 scripts/install.sh                        # release build → ~/.local/bin/macbat
 BINDIR=/usr/local/bin scripts/install.sh  # or pick another directory

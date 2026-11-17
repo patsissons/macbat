@@ -1106,21 +1106,25 @@
   <section id="install">
     <div class="wrap">
       <h2>Install</h2>
-      <p class="intro">macbat is built from source with Cargo. There are no prebuilt downloads yet.</p>
+      <p class="intro">Install with Homebrew, or build it yourself with Cargo.</p>
       <ul class="req">
         <li>A MacBook with Apple silicon (M1 or later)</li>
         <li>macOS</li>
-        <li>Rust, from <a href="https://rustup.rs">rustup.rs</a></li>
       </ul>
       <div class="steps">
         <div>
+          <h3>With Homebrew</h3>
+          <p>Installs the latest release from the <a href="https://github.com/patsissons/homebrew-tap"><code>patsissons/tap</code></a> tap. Homebrew builds it from the release source and installs Rust for the build if needed.</p>
+          <div class="code"><pre><code><span class="p">$ </span>brew install patsissons/tap/macbat</code></pre></div>
+        </div>
+        <div>
           <h3>With Cargo</h3>
-          <p>Builds the latest version from GitHub and puts <code>macbat</code> in <code>~/.cargo/bin</code>.</p>
+          <p>Needs Rust, from <a href="https://rustup.rs">rustup.rs</a>. Builds the latest version from GitHub and puts <code>macbat</code> in <code>~/.cargo/bin</code>.</p>
           <div class="code"><pre><code><span class="p">$ </span>cargo install --git https://github.com/patsissons/macbat</code></pre></div>
         </div>
         <div>
           <h3>From a clone</h3>
-          <p>Builds a release binary and installs it to <code>~/.local/bin</code>. Set <code>BINDIR</code> to install somewhere else.</p>
+          <p>Also needs Rust. Builds a release binary and installs it to <code>~/.local/bin</code>. Set <code>BINDIR</code> to install somewhere else.</p>
           <div class="code"><pre><code><span class="p">$ </span>git clone https://github.com/patsissons/macbat
 <span class="p">$ </span>cd macbat
 <span class="p">$ </span>scripts/install.sh</code></pre></div>
