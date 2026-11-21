@@ -28,11 +28,11 @@ The TUI needs a real tty. Render it headless in tmux and capture the screen:
 ```sh
 tmux new-session -d -s macbat -x 120 -y 36 ./target/debug/macbat
 sleep 5; tmux capture-pane -p -t macbat      # text snapshot of the UI
-tmux send-keys -t macbat v                    # drive keys: q c v r + -
+tmux send-keys -t macbat v                    # drive keys: q c v r + - p (then g s j k)
 tmux kill-session -t macbat
 ```
 
-Pressing `c`/`v`/`r`/`+`/`-` writes `~/.config/macbat.json` (the user's real preferences). Restore it
+Pressing `c`/`v`/`r`/`+`/`-`/`p`/`g`/`s` writes `~/.config/macbat.json` (the user's real preferences). Restore it
 after testing.
 
 ## Layout
@@ -44,7 +44,9 @@ after testing.
 | `src/battery.rs` | Reads the `AppleSmartBattery` registry entry, serializes it to a binary plist, deserializes with serde |
 | `src/sampler.rs` | Merges SMC + registry into `Sample` (the JSON schema for `pipe`); all fallback logic lives here |
 | `src/app.rs` | ratatui UI: panels, sparkline/gauge views, history chart, key handling |
-| `src/config.rs` | Persisted UI prefs (color, view, history window) |
+| `src/libproc.rs` | Hand-written libproc FFI: pid list, names, paths, `rusage_info_v6` |
+| `src/procs.rs` | Per-process energy: `ProcSampler` diffs the energy counters each tick, `ProcStats` keeps per-app and per-process totals for the UI |
+| `src/config.rs` | Persisted UI prefs (color, view, history window, screen, process grouping and sort) |
 | `src/main.rs` | clap CLI: default TUI, `pipe`, `debug` |
 | `scripts/` | `build.sh`, `install.sh` and `run.sh` wrappers around cargo; `screenshot.sh` + `ansi2svg.py` render the README image; `sync-site-screenshot.sh` embeds it in the site |
 | `site/index.html` | Single-page site for macbat.lgtm.page. Everything (CSS, JS, screenshot) is inline; keep it one file |
@@ -78,6 +80,12 @@ relying on them for other models.
   registry. The UI shows `NominalChargeCapacity / DesignCapacity`, labelled "% of design". Don't
   call it health.
 - `AvgTimeToFull` / `AvgTimeToEmpty` use 65535 to mean "still estimating".
+- **Per-process energy only covers the user's own processes.** `proc_pid_rusage` returns EPERM
+  for root and system-daemon processes (about a quarter of them, including WindowServer), and
+  `ri_energy_nj` is CPU energy only. The processes summing to far less than `PSTR` is expected;
+  the table's "other" row holds the difference. Don't scale the rows up to make them add up.
+- **Process power can briefly exceed `PSTR`** under a sudden load, because the two are sampled
+  at different moments. The "other" row is clamped at zero for that reason.
 
 ## Conventions
 

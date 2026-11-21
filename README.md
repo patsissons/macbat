@@ -40,17 +40,33 @@ macbat                 # TUI
 macbat -i 500          # TUI, sample every 500 ms
 macbat pipe            # JSON lines, one sample per interval
 macbat pipe -s 1 | jq  # single sample
+macbat pipe --procs    # also list per-process power in each sample
 macbat debug           # raw SMC keys + battery registry entry
 macbat debug P         # every SMC key starting with "P"
 ```
 
-Keys: `q` quit · `c` cycle color · `v` sparkline/gauge view · `r` sparkline scale · `+`/`-` history window (1m, 5m, 15m, 1h).
+Keys: `q` quit · `p` power/processes screen · `c` cycle color · `v` sparkline/gauge view · `r` sparkline scale · `+`/`-` history window (1m, 5m, 15m, 1h).
 
 `r` cycles the sparkline scale:
 
 - **default**: Power In against the charger's negotiated power, System and Battery against their visible peak.
 - **auto**: every panel against its visible peak, marked by a line above the bars labelled with that peak (signed for Battery: + charging, − discharging).
 - **full**: every panel from 0 to the charger's negotiated power (the session peak if that's higher, or on battery).
+
+`p` switches to the process table: power now, average and peak power, and energy used since
+macbat started, per app. On that screen `g` switches between one row per app (helpers combined
+into their app) and one row per process, `s` cycles the sort (now, total, peak) and `↑`/`↓`/`j`/`k`/
+`PgUp`/`PgDn` scroll.
+
+- **SHARE** is the row's part of all the energy the system has used since macbat started.
+- **≈BATT** is the same energy as a fraction of a full charge.
+- The last row, **other**, is system power minus everything attributed to a process: the display,
+  radios, and the processes macbat can't read.
+
+Two limits apply. Without root only your own processes are readable, so system daemons such as
+WindowServer land in "other". And the counter covers CPU energy only, so a process that keeps the
+GPU or the display busy costs more than its row shows.
+
 Preferences persist in `~/.config/macbat.json`.
 
 ## Where the numbers come from
@@ -62,6 +78,7 @@ Preferences persist in `~/.config/macbat.json`.
 | Battery V / A | SMC `B0AV`, `B0AC` | Little-endian ints on Apple Silicon; A is signed (− = discharging). Cross-checked against the registry voltage |
 | Battery power | `B0AV × B0AC` | + charging, − discharging |
 | Battery temp | SMC `TB0T`–`TB2T` | Average of the pack sensors |
+| Per-process energy | `proc_pid_rusage` `ri_energy_nj` | Cumulative CPU energy per process; own processes only without root |
 | Negotiated adapter W/V/A, charger offers, charge %, mAh, cycles, time to full/empty | IORegistry `AppleSmartBattery` | Same data as `ioreg -rw0 -c AppleSmartBattery` |
 
 The `AppleSmartBattery` registry entry also has `PowerTelemetryData` (system power in/load, battery
