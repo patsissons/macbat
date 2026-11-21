@@ -1,6 +1,7 @@
 //! Combines live SMC sensors with the battery registry into one `Sample`.
 
 use crate::battery::{BatteryReader, Registry};
+use crate::procs::ProcSample;
 use crate::smc::{Smc, fourcc};
 use serde::Serialize;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -16,6 +17,9 @@ pub struct Sample {
     pub system_watts: f64,
     pub battery: Battery,
     pub adapter: Option<Adapter>,
+    /// Per-process power, only with `pipe --procs`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub processes: Option<Vec<ProcSample>>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -199,6 +203,7 @@ impl Sampler {
                 design_mah: mah(bd.design_capacity),
             },
             adapter,
+            processes: None,
         }
     }
 }

@@ -2,6 +2,8 @@ mod app;
 mod battery;
 mod config;
 mod iokit;
+mod libproc;
+mod procs;
 mod sampler;
 mod smc;
 
@@ -28,6 +30,9 @@ enum Command {
         /// Number of samples to emit; 0 runs indefinitely
         #[arg(short, long, default_value_t = 0)]
         samples: u64,
+        /// Add a `processes` array: per-process power for processes that used energy
+        #[arg(long)]
+        procs: bool,
     },
     /// Print raw sensor data: power-related SMC keys and the battery registry entry
     Debug {
@@ -47,7 +52,7 @@ fn main() {
     let interval = Duration::from_millis(cli.interval.max(100));
     let result = match cli.command {
         None => app::run(interval),
-        Some(Command::Pipe { samples }) => pipe(interval, samples),
+        Some(Command::Pipe { samples, procs }) => pipe(interval, samples, procs),
         Some(Command::Debug { prefix }) => debug(prefix),
     };
     if let Err(e) = result {
@@ -56,12 +61,23 @@ fn main() {
     }
 }
 
-fn pipe(interval: Duration, samples: u64) -> Result<(), String> {
+fn pipe(interval: Duration, samples: u64, procs: bool) -> Result<(), String> {
     let mut sampler = sampler::Sampler::new()?;
+    let mut proc_sampler = procs.then(procs::ProcSampler::new);
+    let mut last_tick: Option<Instant> = None;
     let mut n = 0;
     loop {
         let started = Instant::now();
-        let line = serde_json::to_string(&sampler.sample()).map_err(|e| e.to_string())?;
+        let mut sample = sampler.sample();
+        if let Some(ps) = &mut proc_sampler {
+            // The first sample has nothing to diff against, so its list is empty.
+            let tick = ps.sample();
+            let now = Instant::now();
+            let dt = last_tick.map(|t| now.duration_since(t).as_secs_f64()).unwrap_or(0.0);
+            last_tick = Some(now);
+            sample.processes = Some(tick.samples(dt));
+        }
+        let line = serde_json::to_string(&sample).map_err(|e| e.to_string())?;
         println!("{line}");
         n += 1;
         if samples > 0 && n >= samples {
