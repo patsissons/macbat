@@ -1,7 +1,9 @@
 //! Terminal UI, modelled on macmon: rounded panels with live values in the titles,
-//! sparklines (or gauges) per metric, and a combined history chart.
+//! sparklines (or gauges) per metric, and a combined history chart. A second screen lists
+//! per-process energy use.
 
-use crate::config::{Config, Scale, View};
+use crate::config::{Config, Group, Scale, Screen, Sort, View};
+use crate::procs::{ProcSampler, ProcStats, ProcTick, Usage};
 use crate::sampler::{Adapter, Sample, Sampler};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::{
@@ -11,8 +13,8 @@ use ratatui::{
     symbols::Marker,
     text::{Line, Span},
     widgets::{
-        Axis, Block, BorderType, Chart, Dataset, Gauge, GraphType, LegendPosition, Paragraph,
-        RenderDirection, Sparkline, SparklineBar,
+        Axis, Block, BorderType, Cell, Chart, Dataset, Gauge, GraphType, LegendPosition, Paragraph,
+        RenderDirection, Row, Sparkline, SparklineBar, Table,
     },
 };
 use std::collections::VecDeque;
@@ -27,14 +29,19 @@ const SERIES: [Color; 5] = [Color::Yellow, Color::Magenta, Color::Cyan, Color::B
 const WINDOWS: [u64; 4] = [60, 300, 900, 3600];
 /// Smallest sparkline ceiling, W, so near-zero noise isn't magnified into full-height bars.
 const MIN_CEILING: f64 = 1.0;
+/// Rows moved by PgUp/PgDn in the process table.
+const PAGE: usize = 10;
 
 pub fn run(interval: Duration) -> Result<(), String> {
     let mut sampler = Sampler::new()?;
+    let mut procs = ProcSampler::new();
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         loop {
             let started = std::time::Instant::now();
-            if tx.send(sampler.sample()).is_err() {
+            // Processes are sampled on every tick, whichever screen is showing, because their
+            // totals count from when macbat started.
+            if tx.send((sampler.sample(), procs.sample())).is_err() {
                 return;
             }
             std::thread::sleep(interval.saturating_sub(started.elapsed()));
@@ -56,6 +63,9 @@ struct App {
     energy_in_wh: f64,
     energy_sys_wh: f64,
     energy_batt_wh: f64,
+    procs: ProcStats,
+    /// First visible row of the process table; clamped to the table's length when drawn.
+    scroll: std::cell::Cell<usize>,
 }
 
 impl App {
@@ -72,17 +82,19 @@ impl App {
             energy_in_wh: 0.0,
             energy_sys_wh: 0.0,
             energy_batt_wh: 0.0,
+            procs: ProcStats::default(),
+            scroll: std::cell::Cell::new(0),
         }
     }
 
     fn event_loop(
         &mut self,
         terminal: &mut ratatui::DefaultTerminal,
-        rx: mpsc::Receiver<Sample>,
+        rx: mpsc::Receiver<(Sample, ProcTick)>,
     ) -> Result<(), String> {
         loop {
-            while let Ok(sample) = rx.try_recv() {
-                self.push(sample);
+            while let Ok((sample, tick)) = rx.try_recv() {
+                self.push(sample, tick);
             }
             terminal.draw(|f| self.render(f)).map_err(|e| e.to_string())?;
 
@@ -97,6 +109,39 @@ impl App {
                 KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
                 KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => return Ok(()),
                 KeyCode::Char('c') => self.cfg.color = (self.cfg.color + 1) % COLORS.len(),
+                KeyCode::Char('p') => {
+                    self.cfg.screen = self.cfg.screen.toggle();
+                    self.scroll.set(0);
+                }
+                code if self.cfg.screen == Screen::Processes => match code {
+                    KeyCode::Char('g') => {
+                        self.cfg.group = self.cfg.group.toggle();
+                        self.scroll.set(0);
+                    }
+                    KeyCode::Char('s') => self.cfg.sort = self.cfg.sort.next(),
+                    // Scrolling isn't a preference, so there's nothing to save.
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        self.scroll.set(self.scroll.get() + 1);
+                        continue;
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        self.scroll.set(self.scroll.get().saturating_sub(1));
+                        continue;
+                    }
+                    KeyCode::PageDown => {
+                        self.scroll.set(self.scroll.get() + PAGE);
+                        continue;
+                    }
+                    KeyCode::PageUp => {
+                        self.scroll.set(self.scroll.get().saturating_sub(PAGE));
+                        continue;
+                    }
+                    KeyCode::Home => {
+                        self.scroll.set(0);
+                        continue;
+                    }
+                    _ => continue,
+                },
                 KeyCode::Char('v') => self.cfg.view = self.cfg.view.toggle(),
                 KeyCode::Char('r') => self.cfg.scale = self.cfg.scale.next(),
                 KeyCode::Char('+') | KeyCode::Char('=') => {
@@ -109,7 +154,9 @@ impl App {
         }
     }
 
-    fn push(&mut self, sample: Sample) {
+    fn push(&mut self, sample: Sample, tick: ProcTick) {
+        let elapsed_ms = self.history.back().map(|prev| sample.timestamp_ms.saturating_sub(prev.timestamp_ms));
+        self.procs.apply(&tick, elapsed_ms.unwrap_or(0) as f64 / 1000.0);
         if let Some(prev) = self.history.back() {
             let hours = sample.timestamp_ms.saturating_sub(prev.timestamp_ms) as f64 / 3_600_000.0;
             self.energy_in_wh += prev.input.watts * hours;
@@ -162,12 +209,19 @@ impl App {
             _ => "on battery".into(),
         };
         let header = if s.source == "smc" { header } else { format!("{header} · registry only (slow updates)") };
-        let hint = format!(
-            "q quit · c color · v view: {} · r scale: {} · +/- history: {}",
-            self.cfg.view.label(),
-            self.cfg.scale.label(),
-            fmt_secs(self.window_secs())
-        );
+        let hint = match self.cfg.screen {
+            Screen::Power => format!(
+                "q quit · p processes · c color · v view: {} · r scale: {} · +/- history: {}",
+                self.cfg.view.label(),
+                self.cfg.scale.label(),
+                fmt_secs(self.window_secs())
+            ),
+            Screen::Processes => format!(
+                "q quit · p power · c color · g group: {} · s sort: {} · ↑/↓ scroll",
+                self.cfg.group.label(),
+                self.cfg.sort.label()
+            ),
+        };
         let width = f.area().width;
         let model = format!("{} · macbat v{}", self.model, env!("CARGO_PKG_VERSION"));
         let (header, model) = fit(width, &header, &model);
@@ -185,6 +239,11 @@ impl App {
         }
         let area = outer.inner(f.area());
         f.render_widget(outer, f.area());
+
+        if self.cfg.screen == Screen::Processes {
+            self.render_procs(f, area, s);
+            return;
+        }
 
         let [row1, row2, row3] =
             Layout::vertical([Constraint::Fill(1), Constraint::Fill(1), Constraint::Fill(2)]).areas(area);
@@ -461,6 +520,118 @@ impl App {
             );
         f.render_widget(chart, area);
     }
+
+    /// The process table: one row per app (or process), plus a last row for everything that
+    /// can't be attributed to a readable process.
+    fn render_procs(&self, f: &mut Frame, area: Rect, s: &Sample) {
+        let accent = self.accent();
+        let p = &self.procs;
+        let by_app = self.cfg.group == Group::App;
+
+        let mut rows = p.rows(by_app);
+        let key = |u: &Usage| match self.cfg.sort {
+            Sort::Now => (u.now_w, u.total_j),
+            Sort::Total => (u.total_j, u.now_w),
+            Sort::Peak => (u.peak_w, u.total_j),
+        };
+        rows.sort_by(|a, b| {
+            let (a1, a2) = key(a);
+            let (b1, b2) = key(b);
+            b1.total_cmp(&a1).then(b2.total_cmp(&a2)).then_with(|| a.name.cmp(&b.name)).then(a.pid.cmp(&b.pid))
+        });
+
+        let sys_j = self.energy_sys_wh * 3600.0;
+        let mut other = Usage::new("other (display, system daemons, …)".into(), None, 0);
+        other.now_w = (s.system_watts - p.now_w()).max(0.0);
+        other.total_j = (sys_j - p.total_j()).max(0.0);
+        // A full charge in J, for putting totals in terms of the battery.
+        let full_j = s.battery.full_charge_mah.map(|mah| mah as f64 / 1000.0 * s.battery.volts * 3600.0);
+
+        let block = panel(
+            accent,
+            area.width,
+            "Processes",
+            format!("{} of {}", fmt_w(p.now_w()), fmt_w(s.system_watts)),
+            format!(
+                "since {} · {} processes · {} need root",
+                fmt_secs(p.elapsed_s as u64),
+                p.readable,
+                p.unreadable
+            ),
+            String::new(),
+        );
+        let inner = block.inner(area);
+        f.render_widget(block, area);
+
+        // Columns, with the order they're dropped in when the terminal is narrow (0 = never).
+        let second = if by_app { "PROCS" } else { "PID" };
+        let mut cols: Vec<(&str, u16, u8)> = vec![
+            ("NAME", 0, 0),
+            (second, 7, 4),
+            ("NOW", 9, 0),
+            ("AVG", 9, 0),
+            ("PEAK", 9, 2),
+            ("TOTAL", 10, 0),
+            ("SHARE", 7, 3),
+            ("≈BATT", 7, 1),
+        ];
+        const NAME_MIN: u16 = 16;
+        let needed = |cols: &[(&str, u16, u8)]| NAME_MIN + cols.iter().map(|c| c.1 + 1).sum::<u16>();
+        for drop in 1..=4 {
+            if needed(&cols) <= inner.width {
+                break;
+            }
+            cols.retain(|c| c.2 != drop);
+        }
+
+        let sorted = match self.cfg.sort {
+            Sort::Now => "NOW",
+            Sort::Total => "TOTAL",
+            Sort::Peak => "PEAK",
+        };
+        let header = Row::new(cols.iter().map(|&(name, ..)| {
+            let style = if name == sorted { Style::new().fg(accent).bold() } else { Style::new().dark_gray() };
+            let line = Line::styled(name, style);
+            Cell::from(if name == "NAME" { line } else { line.right_aligned() })
+        }));
+
+        let cell = |u: &Usage, col: &str, is_other: bool| -> Cell<'static> {
+            let text = match col {
+                "NAME" => return Cell::from(u.name.to_string()),
+                "PROCS" if is_other => String::new(),
+                "PROCS" => u.count.to_string(),
+                "PID" => u.pid.filter(|_| !is_other).map(|p| p.to_string()).unwrap_or_default(),
+                "NOW" => fmt_small_w(u.now_w),
+                "AVG" if p.elapsed_s > 0.0 => fmt_small_w(u.total_j / p.elapsed_s),
+                "PEAK" if !is_other => fmt_small_w(u.peak_w),
+                "TOTAL" => fmt_energy(u.total_j),
+                "SHARE" if sys_j > 0.0 => format!("{:.1}%", u.total_j / sys_j * 100.0),
+                "≈BATT" => full_j.filter(|j| *j > 0.0).map(|j| format!("{:.2}%", u.total_j / j * 100.0)).unwrap_or_default(),
+                _ => String::new(),
+            };
+            Cell::from(Line::from(text).right_aligned())
+        };
+
+        // One line for the header and one for the "other" row.
+        let visible = (inner.height as usize).saturating_sub(2);
+        let scroll = self.scroll.get().min(rows.len().saturating_sub(visible));
+        self.scroll.set(scroll);
+
+        let mut body: Vec<Row> = rows
+            .iter()
+            .skip(scroll)
+            .take(visible)
+            .map(|u| {
+                let row = Row::new(cols.iter().map(|c| cell(u, c.0, false)));
+                // Idle rows recede so the active ones stand out.
+                if u.now_w > 0.0 { row } else { row.dark_gray() }
+            })
+            .collect();
+        body.push(Row::new(cols.iter().map(|c| cell(&other, c.0, true))).italic());
+
+        let widths = cols.iter().map(|&(name, w, _)| if name == "NAME" { Constraint::Min(NAME_MIN) } else { Constraint::Length(w) });
+        f.render_widget(Table::new(body, widths).header(header).column_spacing(1), inner);
+    }
 }
 
 /// Fits a left and a right title into one border of a block `width` cells wide.
@@ -557,6 +728,29 @@ fn cw(w: f64) -> u64 {
 
 fn fmt_w(w: f64) -> String {
     if w.abs() < 10.0 { format!("{w:.2} W") } else { format!("{w:.1} W") }
+}
+
+/// Power for the process table, where most values are well under a watt.
+fn fmt_small_w(w: f64) -> String {
+    if w <= 0.0 {
+        "–".into()
+    } else if w < 0.1 {
+        format!("{:.1} mW", w * 1000.0)
+    } else {
+        fmt_w(w)
+    }
+}
+
+/// Energy in J shown as mWh or Wh.
+fn fmt_energy(j: f64) -> String {
+    let wh = j / 3600.0;
+    if wh <= 0.0 {
+        "–".into()
+    } else if wh < 1.0 {
+        format!("{:.2} mWh", wh * 1000.0)
+    } else {
+        format!("{wh:.2} Wh")
+    }
 }
 
 fn fmt_signed_w(w: f64) -> String {

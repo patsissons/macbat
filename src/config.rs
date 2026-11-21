@@ -1,4 +1,5 @@
-//! Persists UI preferences (color, view, sparkline scale, history window) to ~/.config/macbat.json.
+//! Persists UI preferences (color, view, sparkline scale, history window, screen and process
+//! table options) to ~/.config/macbat.json.
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -59,6 +60,79 @@ impl Scale {
     }
 }
 
+/// Which screen fills the frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Screen {
+    #[default]
+    Power,
+    Processes,
+}
+
+impl Screen {
+    pub fn toggle(self) -> Self {
+        match self {
+            Screen::Power => Screen::Processes,
+            Screen::Processes => Screen::Power,
+        }
+    }
+}
+
+/// Whether the process table has one row per app or per process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Group {
+    /// Helpers and child processes inside an app bundle are combined into the app.
+    #[default]
+    App,
+    Process,
+}
+
+impl Group {
+    pub fn toggle(self) -> Self {
+        match self {
+            Group::App => Group::Process,
+            Group::Process => Group::App,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Group::App => "app",
+            Group::Process => "process",
+        }
+    }
+}
+
+/// Process table sort column, always highest first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Sort {
+    #[default]
+    Now,
+    /// Energy since macbat started; the same order as average power.
+    Total,
+    Peak,
+}
+
+impl Sort {
+    pub fn next(self) -> Self {
+        match self {
+            Sort::Now => Sort::Total,
+            Sort::Total => Sort::Peak,
+            Sort::Peak => Sort::Now,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Sort::Now => "now",
+            Sort::Total => "total",
+            Sort::Peak => "peak",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -66,6 +140,9 @@ pub struct Config {
     pub view: View,
     pub scale: Scale,
     pub window: usize,
+    pub screen: Screen,
+    pub group: Group,
+    pub sort: Sort,
 }
 
 fn path() -> Option<PathBuf> {
