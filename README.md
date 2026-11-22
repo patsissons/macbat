@@ -4,7 +4,7 @@ Sudoless power monitor for Apple Silicon laptops, in the style of [macmon](https
 Shows what the power adapter is delivering, what the system is drawing, and whether the battery is
 charging or covering a shortfall — live, and over time.
 
-![macbat on an M2 MacBook Air, fully charged on a 25 W charger, with sparklines on autoscale](assets/screenshot.svg)
+![macbat on an M2 MacBook Air, charging at 78% on a 20 W charger, with sparklines on autoscale](assets/screenshot.svg)
 
 ## Install
 
